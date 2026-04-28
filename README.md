@@ -6,3 +6,4 @@
         self.db_path = Path(r"D:\livecap\translation_history.db")//绝对路径，修改为自己的实际路径，或是与我的路径保持一致
         self.font_path = self.script_dir / "font" / "gnuunifontfull-pm9p.ttf"
         self.temp_texture = self.script_dir / "temp_texture.png"
+   打开在build\steampy_overlay.exe中
