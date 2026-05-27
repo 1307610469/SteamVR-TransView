@@ -1,4 +1,4 @@
-# vrc_trans.py
+# SteamVR-TransView
 VRChat VR 实时翻译悬浮工具 | 语音/文字翻译实时叠加显示
 
 ## 功能介绍
