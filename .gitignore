@@ -1,0 +1,35 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Packaging cache
+build/
+dist/
+build/**/localpycs/
+dist/steampy_overlay/_internal/PIL/
+dist/steampy_overlay/_internal/_tcl_data/
+dist/steampy_overlay/_internal/_tk_data/
+dist/steampy_overlay/_internal/*.dll
+dist/steampy_overlay/_internal/pyexpat.pyd
+*.spec.__pycache__/
+
+# PyInstaller / runtime temp files
+temp_texture.png
+*.tmp
+*.bak
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

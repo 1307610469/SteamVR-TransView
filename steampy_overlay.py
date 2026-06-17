@@ -28,7 +28,10 @@ def load_openvr_dll():
     ctypes.CDLL(str(dll_path))
 
 load_openvr_dll()
-import openvr  # pyright: ignore[reportMissingImports]
+try:
+    import openvr  # pyright: ignore[reportMissingImports]
+except Exception:
+    openvr = None
 from PIL import Image, ImageDraw, ImageFont  # pyright: ignore[reportMissingImports]
 
 
@@ -104,6 +107,8 @@ class SteamVRTranslationOverlay:
 
     def _init_steamvr(self):
         try:
+            if openvr is None:
+                raise ModuleNotFoundError("openvr 未安装或未被打包到运行环境")
             openvr.init(openvr.VRApplication_Overlay)
             self.vr_system = openvr.VRSystem()
             self.vr_overlay = openvr.IVROverlay()
@@ -317,36 +322,39 @@ class SteamVRTranslationOverlay:
 
 
 class SteamVRTransViewApp:
-    BG = "#0f172a"
-    PANEL = "#111827"
-    PANEL_2 = "#0b1220"
-    BORDER = "#243047"
-    TEXT = "#e5eef9"
-    MUTED = "#94a3b8"
-    ACCENT = "#38bdf8"
-    ACCENT_2 = "#22c55e"
-    WARN = "#f59e0b"
-    ERROR = "#fb7185"
+    BG = "#f5f5f7"
+    SURFACE = "#ffffff"
+    SURFACE_SOFT = "#fbfbfd"
+    BORDER = "#d2d2d7"
+    TEXT = "#1d1d1f"
+    MUTED = "#6e6e73"
+    ACCENT = "#0071e3"
+    ACCENT_SOFT = "#e8f2ff"
+    GREEN = "#34c759"
+    RED = "#ff3b30"
+    SHADOW = "#ececf2"
 
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("SteamVR TransView")
-        self.root.geometry("980x660")
-        self.root.minsize(900, 620)
+        self.root.geometry("1040x720")
+        self.root.minsize(940, 640)
         self.root.configure(bg=self.BG)
 
         self.style = ttk.Style(self.root)
         self.style.theme_use("clam")
-        self.style.configure("Root.TLabel", background=self.BG, foreground=self.TEXT)
-        self.style.configure("Muted.TLabel", background=self.BG, foreground=self.MUTED)
-        self.style.configure("Card.TFrame", background=self.PANEL)
-        self.style.configure("Accent.TButton", padding=(16, 10), background=self.ACCENT, foreground="#00111f")
-        self.style.map("Accent.TButton", background=[("active", "#7dd3fc")])
-        self.style.configure("Ghost.TButton", padding=(16, 10), background=self.PANEL_2, foreground=self.TEXT)
-        self.style.map("Ghost.TButton", background=[("active", "#1f2937")])
-        self.style.configure("Danger.TButton", padding=(16, 10), background=self.ERROR, foreground="#1f0a0f")
-        self.style.map("Danger.TButton", background=[("active", "#fda4af")])
-        self.style.configure("Path.TEntry", fieldbackground="#0b1220", foreground=self.TEXT, insertcolor=self.TEXT)
+        self.style.configure("Apple.TFrame", background=self.SURFACE)
+        self.style.configure("AppleSoft.TFrame", background=self.SURFACE_SOFT)
+        self.style.configure("Apple.TLabel", background=self.BG, foreground=self.TEXT)
+        self.style.configure("AppleMuted.TLabel", background=self.BG, foreground=self.MUTED)
+        self.style.configure("AppleCard.TLabel", background=self.SURFACE, foreground=self.TEXT)
+        self.style.configure("Accent.TButton", padding=(18, 10), background=self.ACCENT, foreground="#ffffff")
+        self.style.map("Accent.TButton", background=[("active", "#0a84ff")])
+        self.style.configure("Neutral.TButton", padding=(18, 10), background="#f2f2f7", foreground=self.TEXT)
+        self.style.map("Neutral.TButton", background=[("active", "#e5e5ea")])
+        self.style.configure("Danger.TButton", padding=(18, 10), background=self.RED, foreground="#ffffff")
+        self.style.map("Danger.TButton", background=[("active", "#ff453a")])
+        self.style.configure("Apple.TEntry", fieldbackground="#ffffff", foreground=self.TEXT, insertcolor=self.TEXT)
 
         self.log_queue = queue.Queue()
         self.overlay = None
@@ -354,84 +362,184 @@ class SteamVRTransViewApp:
         self.is_running = False
         self.closing = False
         self.status_phase = 0
+        self.main_ready = False
+        self.startup_checks = []
+        self.check_rows = []
 
         default_db = r"D:\livecap\translation_history.db"
         self.db_path_var = tk.StringVar(value=default_db)
         self.status_var = tk.StringVar(value="待启动")
         self.detail_var = tk.StringVar(value="选择数据库路径后启动后台叠加")
         self.preview_var = tk.StringVar(value="等待翻译数据...")
+        self.startup_status_var = tk.StringVar(value="正在执行启动自检...")
 
-        self._build_ui()
+        self._build_startup_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.root.after(120, self._run_startup_checks)
         self.root.after(80, self._drain_logs)
         self.root.after(160, self._animate_status)
-        self.root.after(200, self._refresh_snapshot)
-        self.root.after(300, self._watch_worker)
+        self.root.after(220, self._refresh_snapshot)
+        self.root.after(320, self._watch_worker)
 
-    def _build_ui(self):
+    def _startup_font_path(self):
+        return str(get_runtime_dir() / "font" / "gnuunifontfull-pm9p.ttf")
+
+    def _startup_dll_path(self):
+        return str(get_runtime_dir() / "libopenvr_api_64.dll")
+
+    def _check_font_resource(self):
+        return (get_runtime_dir() / "font" / "gnuunifontfull-pm9p.ttf").exists()
+
+    def _check_openvr_dll(self):
+        return (get_runtime_dir() / "libopenvr_api_64.dll").exists()
+
+    def _build_startup_ui(self):
+        self.startup_frame = tk.Frame(self.root, bg=self.BG)
+        self.startup_frame.pack(fill="both", expand=True)
+
+        shell = tk.Frame(self.startup_frame, bg=self.BG)
+        shell.place(relx=0.5, rely=0.5, anchor="center")
+
+        card = tk.Frame(shell, bg=self.SURFACE, highlightthickness=1, highlightbackground=self.BORDER)
+        card.configure(width=660, height=460)
+        card.pack_propagate(False)
+        card.pack()
+
+        header = tk.Frame(card, bg=self.SURFACE)
+        header.pack(fill="x", padx=30, pady=(28, 8))
+        tk.Label(header, text="SteamVR TransView", bg=self.SURFACE, fg=self.TEXT, font=("Segoe UI", 28, "bold")).pack(anchor="w")
+        tk.Label(header, text="Apple-inspired lightweight control surface", bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 10)).pack(anchor="w", pady=(4, 0))
+        tk.Frame(card, bg=self.BORDER, height=1).pack(fill="x", padx=30, pady=(16, 18))
+
+        self.check_list = tk.Frame(card, bg=self.SURFACE)
+        self.check_list.pack(fill="x", padx=30)
+        self._add_check_row("界面框架", "等待检查")
+        self._add_check_row("字体资源", "等待检查")
+        self._add_check_row("OpenVR DLL", "等待检查")
+        self._add_check_row("数据库路径", "等待检查")
+        self._add_check_row("OpenVR 模块", "等待检查")
+
+        bottom = tk.Frame(card, bg=self.SURFACE)
+        bottom.pack(fill="both", expand=True, padx=30, pady=(20, 26))
+        self.startup_detail = tk.Label(bottom, text="", bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 10), wraplength=570, justify="left")
+        self.startup_detail.pack(anchor="w", pady=(0, 14))
+        tk.Label(bottom, textvariable=self.startup_status_var, bg=self.SURFACE, fg=self.TEXT, font=("Segoe UI Semibold", 12)).pack(anchor="w")
+
+        action = tk.Frame(bottom, bg=self.SURFACE)
+        action.pack(side="bottom", fill="x")
+        self.enter_button = ttk.Button(action, text="继续进入", command=self._enter_main_ui, style="Accent.TButton", state="disabled")
+        self.enter_button.pack(anchor="e")
+
+    def _add_check_row(self, title, status):
+        row = tk.Frame(self.check_list, bg=self.SURFACE)
+        row.pack(fill="x", pady=7)
+        indicator = tk.Canvas(row, width=18, height=18, bg=self.SURFACE, highlightthickness=0)
+        indicator.pack(side="left")
+        dot = indicator.create_oval(4, 4, 14, 14, fill="#c7c7cc", outline="#c7c7cc")
+        label = tk.Label(row, text=f"{title} · {status}", bg=self.SURFACE, fg=self.TEXT, font=("Segoe UI", 11))
+        label.pack(side="left", padx=12)
+        self.check_rows.append((indicator, dot, label, title))
+
+    def _set_check_row(self, index, status_text, color):
+        indicator, dot, label, title = self.check_rows[index]
+        indicator.itemconfig(dot, fill=color, outline=color)
+        label.configure(text=f"{title} · {status_text}")
+
+    def _run_startup_checks(self):
+        self.startup_checks = [
+            ("界面框架", True, "Tkinter 已加载，当前为轻量 Apple 风格界面。"),
+            ("字体资源", self._check_font_resource(), f"字体路径：{self._startup_font_path()}"),
+            ("OpenVR DLL", self._check_openvr_dll(), f"DLL 路径：{self._startup_dll_path()}"),
+            ("数据库路径", Path(self.db_path_var.get()).exists(), f"当前路径：{self.db_path_var.get()}"),
+            ("OpenVR 模块", openvr is not None, "openvr 模块可用。" if openvr is not None else "openvr 尚未加载，启动后会提示。"),
+        ]
+
+        all_ok = True
+        for index, (_, ok, detail) in enumerate(self.startup_checks):
+            self._set_check_row(index, "通过" if ok else "未通过", self.GREEN if ok else self.RED)
+            if not ok:
+                all_ok = False
+            self.startup_detail.configure(text=detail)
+
+        self.startup_status_var.set("自检完成，点击继续进入主界面" if all_ok else "自检完成，存在可选项未通过，但仍可继续")
+        self.enter_button.configure(state="normal")
+
+    def _enter_main_ui(self):
+        if self.main_ready:
+            return
+        self.main_ready = True
+        self.startup_frame.destroy()
+        self._build_main_ui()
+
+    def _build_main_ui(self):
         main = tk.Frame(self.root, bg=self.BG)
-        main.pack(fill="both", expand=True, padx=22, pady=18)
+        main.pack(fill="both", expand=True, padx=24, pady=22)
 
-        header = tk.Frame(main, bg=self.BG)
-        header.pack(fill="x")
-        tk.Label(header, text="SteamVR TransView", bg=self.BG, fg=self.TEXT, font=("Segoe UI Semibold", 24)).pack(anchor="w")
-        tk.Label(header, text="轻量化翻译悬浮控制台 · 标准库界面 · 后台实时监控", bg=self.BG, fg=self.MUTED, font=("Segoe UI", 10)).pack(anchor="w", pady=(4, 12))
-        tk.Frame(header, bg=self.ACCENT, height=2).pack(fill="x")
+        top = tk.Frame(main, bg=self.BG)
+        top.pack(fill="x")
+        tk.Label(top, text="SteamVR TransView", bg=self.BG, fg=self.TEXT, font=("Segoe UI", 24, "bold")).pack(anchor="w")
+        tk.Label(top, text="A clean, lightweight control surface for VR translation overlay", bg=self.BG, fg=self.MUTED, font=("Segoe UI", 10)).pack(anchor="w", pady=(4, 0))
 
-        body = tk.Frame(main, bg=self.BG)
-        body.pack(fill="both", expand=True, pady=(18, 0))
-        body.columnconfigure(0, weight=3)
-        body.columnconfigure(1, weight=2)
-        body.rowconfigure(0, weight=1)
-        body.rowconfigure(1, weight=1)
+        status_pill = tk.Frame(top, bg=self.SURFACE, highlightthickness=1, highlightbackground=self.BORDER)
+        status_pill.pack(anchor="e")
+        tk.Label(status_pill, textvariable=self.status_var, bg=self.SURFACE, fg=self.TEXT, font=("Segoe UI Semibold", 10)).pack(side="left", padx=(12, 10), pady=6)
+        self.status_canvas = tk.Canvas(status_pill, width=18, height=18, bg=self.SURFACE, highlightthickness=0)
+        self.status_canvas.pack(side="left", padx=(0, 12))
+        self.status_dot = self.status_canvas.create_oval(4, 4, 14, 14, fill="#c7c7cc", outline="#c7c7cc")
 
-        status_card = tk.Frame(body, bg=self.PANEL, highlightthickness=1, highlightbackground=self.BORDER)
-        status_card.grid(row=0, column=0, sticky="nsew", padx=(0, 12), pady=(0, 12))
-        control_card = tk.Frame(body, bg=self.PANEL, highlightthickness=1, highlightbackground=self.BORDER)
-        control_card.grid(row=0, column=1, sticky="nsew", pady=(0, 12))
-        log_card = tk.Frame(body, bg=self.PANEL_2, highlightthickness=1, highlightbackground=self.BORDER)
-        log_card.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        content = tk.Frame(main, bg=self.BG)
+        content.pack(fill="both", expand=True, pady=(18, 0))
+        content.columnconfigure(0, weight=3)
+        content.columnconfigure(1, weight=2)
+        content.rowconfigure(0, weight=1)
+        content.rowconfigure(1, weight=0)
 
-        tk.Label(status_card, text="实时状态", bg=self.PANEL, fg=self.TEXT, font=("Segoe UI Semibold", 13)).pack(anchor="w", padx=18, pady=(18, 8))
-        status_row = tk.Frame(status_card, bg=self.PANEL)
-        status_row.pack(fill="x", padx=18)
-        self.status_canvas = tk.Canvas(status_row, width=24, height=24, bg=self.PANEL, highlightthickness=0)
-        self.status_canvas.pack(side="left")
-        self.status_dot = self.status_canvas.create_oval(4, 4, 20, 20, fill=self.MUTED, outline=self.MUTED)
-        tk.Label(status_row, textvariable=self.status_var, bg=self.PANEL, fg=self.TEXT, font=("Segoe UI Semibold", 12)).pack(side="left", padx=10)
-        tk.Label(status_card, textvariable=self.detail_var, bg=self.PANEL, fg=self.MUTED, font=("Segoe UI", 10), wraplength=520, justify="left").pack(anchor="w", padx=18, pady=(10, 14))
+        left = tk.Frame(content, bg=self.SURFACE, highlightthickness=1, highlightbackground=self.BORDER)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        right = tk.Frame(content, bg=self.SURFACE, highlightthickness=1, highlightbackground=self.BORDER)
+        right.grid(row=0, column=1, sticky="nsew")
+        log_card = tk.Frame(content, bg=self.SURFACE, highlightthickness=1, highlightbackground=self.BORDER)
+        log_card.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
 
-        preview_box = tk.Frame(status_card, bg=self.PANEL_2, highlightthickness=1, highlightbackground=self.BORDER)
-        preview_box.pack(fill="both", expand=True, padx=18, pady=(0, 18))
-        tk.Label(preview_box, text="最新翻译", bg=self.PANEL_2, fg=self.MUTED, font=("Segoe UI", 9)).pack(anchor="w", padx=14, pady=(12, 0))
-        tk.Label(preview_box, textvariable=self.preview_var, bg=self.PANEL_2, fg=self.TEXT, font=("Segoe UI", 12), wraplength=500, justify="left").pack(anchor="w", padx=14, pady=(8, 14))
+        tk.Label(left, text="实时状态", bg=self.SURFACE, fg=self.TEXT, font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=22, pady=(20, 8))
+        tk.Label(left, textvariable=self.detail_var, bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 10), wraplength=570, justify="left").pack(anchor="w", padx=22)
 
-        tk.Label(control_card, text="控制面板", bg=self.PANEL, fg=self.TEXT, font=("Segoe UI Semibold", 13)).pack(anchor="w", padx=18, pady=(18, 8))
-        tk.Label(control_card, text="数据库路径", bg=self.PANEL, fg=self.MUTED, font=("Segoe UI", 10)).pack(anchor="w", padx=18)
-        path_row = tk.Frame(control_card, bg=self.PANEL)
-        path_row.pack(fill="x", padx=18, pady=(8, 12))
-        self.path_entry = ttk.Entry(path_row, textvariable=self.db_path_var, style="Path.TEntry")
+        preview = tk.Frame(left, bg=self.SURFACE_SOFT, highlightthickness=1, highlightbackground=self.BORDER)
+        preview.pack(fill="both", expand=True, padx=22, pady=18)
+        tk.Label(preview, text="最新翻译", bg=self.SURFACE_SOFT, fg=self.MUTED, font=("Segoe UI", 9)).pack(anchor="w", padx=16, pady=(14, 0))
+        tk.Label(preview, textvariable=self.preview_var, bg=self.SURFACE_SOFT, fg=self.TEXT, font=("Segoe UI", 14), wraplength=560, justify="left").pack(anchor="w", padx=16, pady=(10, 16))
+
+        tk.Label(right, text="控制", bg=self.SURFACE, fg=self.TEXT, font=("Segoe UI", 15, "bold")).pack(anchor="w", padx=22, pady=(20, 8))
+        tk.Label(right, text="数据库路径", bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 10)).pack(anchor="w", padx=22)
+        path_row = tk.Frame(right, bg=self.SURFACE)
+        path_row.pack(fill="x", padx=22, pady=(8, 14))
+        self.path_entry = ttk.Entry(path_row, textvariable=self.db_path_var, style="Apple.TEntry")
         self.path_entry.pack(side="left", fill="x", expand=True)
-        ttk.Button(path_row, text="浏览", command=self._choose_db_path, style="Ghost.TButton").pack(side="left", padx=(10, 0))
+        ttk.Button(path_row, text="浏览", command=self._choose_db_path, style="Neutral.TButton").pack(side="left", padx=(10, 0))
 
-        action_row = tk.Frame(control_card, bg=self.PANEL)
-        action_row.pack(fill="x", padx=18, pady=(4, 12))
+        action_row = tk.Frame(right, bg=self.SURFACE)
+        action_row.pack(fill="x", padx=22, pady=(6, 14))
         self.start_button = ttk.Button(action_row, text="启动", command=self._start_overlay, style="Accent.TButton")
         self.start_button.pack(side="left", fill="x", expand=True)
         self.stop_button = ttk.Button(action_row, text="停止", command=self._stop_overlay, style="Danger.TButton", state="disabled")
         self.stop_button.pack(side="left", fill="x", expand=True, padx=(10, 0))
 
-        tips = (
-            "1. 先启动 SteamVR 和 LiveCaptions-Translator\n"
-            "2. 选中 translation_history.db 后点击启动\n"
-            "3. 界面会保持轻量轮询，不做重型动画"
+        notes = (
+            "先启动 SteamVR 和 LiveCaptions-Translator。\n"
+            "选择 translation_history.db 后再启动。\n"
+            "界面采用低负载刷新，不做重动画。"
         )
-        tk.Label(control_card, text=tips, bg=self.PANEL, fg=self.MUTED, font=("Segoe UI", 10), justify="left").pack(anchor="w", padx=18, pady=(2, 18))
+        tk.Label(right, text=notes, bg=self.SURFACE, fg=self.MUTED, font=("Segoe UI", 10), justify="left", wraplength=300).pack(anchor="w", padx=22, pady=(6, 20))
 
-        tk.Label(log_card, text="运行日志", bg=self.PANEL_2, fg=self.TEXT, font=("Segoe UI Semibold", 12)).pack(anchor="w", padx=18, pady=(14, 8))
-        self.log_text = tk.Text(log_card, height=8, bg="#08111f", fg=self.TEXT, insertbackground=self.TEXT, relief="flat", borderwidth=0, highlightthickness=0, wrap="word")
-        self.log_text.pack(fill="both", expand=True, padx=18, pady=(0, 16))
+        tk.Label(log_card, text="运行日志", bg=self.SURFACE, fg=self.TEXT, font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=22, pady=(16, 8))
+        self.log_text = tk.Text(log_card, height=8, bg="#fbfbfd", fg=self.TEXT, insertbackground=self.TEXT, relief="flat", borderwidth=0, highlightthickness=0, wrap="word")
+        self.log_text.pack(fill="both", expand=True, padx=22, pady=(0, 18))
         self.log_text.configure(state="disabled")
+
+        self.root.after(80, self._drain_logs)
+        self.root.after(160, self._animate_status)
+        self.root.after(220, self._refresh_snapshot)
+        self.root.after(320, self._watch_worker)
 
     def _enqueue_log(self, message):
         self.log_queue.put(message)
@@ -445,23 +553,23 @@ class SteamVRTransViewApp:
     def _drain_logs(self):
         try:
             while True:
-                message = self.log_queue.get_nowait()
-                self._append_log(message)
+                self._append_log(self.log_queue.get_nowait())
         except queue.Empty:
             pass
         if not self.closing:
             self.root.after(80, self._drain_logs)
 
     def _animate_status(self):
-        if self.is_running:
-            palette = ["#38bdf8", "#22c55e", "#67e8f9", "#34d399"]
-            fill = palette[self.status_phase % len(palette)]
-            self.status_phase += 1
-        else:
-            fill = self.MUTED
-        self.status_canvas.itemconfig(self.status_dot, fill=fill, outline=fill)
+        if hasattr(self, "status_canvas") and hasattr(self, "status_dot"):
+            if self.is_running:
+                palette = [self.ACCENT, self.GREEN, "#5ac8fa", "#64d2ff"]
+                fill = palette[self.status_phase % len(palette)]
+                self.status_phase += 1
+            else:
+                fill = "#c7c7cc"
+            self.status_canvas.itemconfig(self.status_dot, fill=fill, outline=fill)
         if not self.closing:
-            self.root.after(160, self._animate_status)
+            self.root.after(180, self._animate_status)
 
     def _refresh_snapshot(self):
         if self.overlay:
@@ -478,18 +586,19 @@ class SteamVRTransViewApp:
             self.detail_var.set("选择数据库路径后启动后台叠加")
             self.preview_var.set("等待翻译数据...")
         if not self.closing:
-            self.root.after(200, self._refresh_snapshot)
+            self.root.after(220, self._refresh_snapshot)
 
     def _watch_worker(self):
         if self.worker_thread and not self.worker_thread.is_alive():
             self.is_running = False
-            self.start_button.configure(state="normal")
-            self.stop_button.configure(state="disabled")
             self.worker_thread = None
-            if self.overlay:
-                self.overlay = None
+            if hasattr(self, "start_button"):
+                self.start_button.configure(state="normal")
+            if hasattr(self, "stop_button"):
+                self.stop_button.configure(state="disabled")
+            self.overlay = None
         if not self.closing:
-            self.root.after(300, self._watch_worker)
+            self.root.after(320, self._watch_worker)
 
     def _choose_db_path(self):
         selected = filedialog.askopenfilename(
@@ -546,7 +655,6 @@ class SteamVRTransViewApp:
 
     def run(self):
         self.root.mainloop()
-
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
